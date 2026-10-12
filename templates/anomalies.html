@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Anomaly Detection</h1>
+
+<div class="filter-section">
+    <form method="get" class="filter-form">
+        <div class="form-group form-inline">
+            <label for="severity">Severity</label>
+            <select id="severity" name="severity" data-testid="severity-filter" class="form-control">
+                <option value="">All</option>
+                <option value="HIGH" {% if severity == 'HIGH' %}selected{% endif %}>HIGH</option>
+                <option value="MEDIUM" {% if severity == 'MEDIUM' %}selected{% endif %}>MEDIUM</option>
+                <option value="LOW" {% if severity == 'LOW' %}selected{% endif %}>LOW</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Apply</button>
+    </form>
+</div>
+
+<table data-testid="anomaly-table" class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Description</th>
+            <th>Severity</th>
+            <th>Status</th>
+            <th>Timestamp</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for a in anomalies %}
+        <tr data-testid="anomaly-row" data-id="{{ a.id }}">
+            <td>{{ a.id }}</td>
+            <td>{{ a.description }}</td>
+            <td data-testid="anomaly-severity" class="severity-{{ a.severity | lower }}">{{ a.severity }}</td>
+            <td data-testid="anomaly-status">{{ a.status }}</td>
+            <td>{{ a.timestamp }}</td>
+            <td class="actions-cell">
+                <a href="/anomalies/{{ a.id }}" class="btn btn-sm btn-secondary">View</a>
+                <form method="post" action="/anomalies/{{ a.id }}/acknowledge" style="display:inline;">
+                    <button data-testid="acknowledge-button" type="submit" class="btn btn-sm btn-primary">Acknowledge</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

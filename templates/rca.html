@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Root Cause Analysis</h1>
+
+<div class="filter-section">
+    <form method="get" class="filter-form">
+        <div class="form-group form-inline">
+            <label for="status">Status</label>
+            <select id="status" name="status" data-testid="status-filter" class="form-control">
+                <option value="">All</option>
+                <option value="open" {% if status == 'open' %}selected{% endif %}>open</option>
+                <option value="in_progress" {% if status == 'in_progress' %}selected{% endif %}>in_progress</option>
+                <option value="resolved" {% if status == 'resolved' %}selected{% endif %}>resolved</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Apply</button>
+    </form>
+</div>
+
+<table data-testid="rca-table" class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in rca_list %}
+        <tr data-testid="rca-row" data-id="{{ r.id }}">
+            <td>{{ r.id }}</td>
+            <td>{{ r.title }}</td>
+            <td data-testid="rca-status">{{ r.status }}</td>
+            <td>
+                <a href="/rca/{{ r.id }}" class="btn btn-sm btn-secondary">View</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Analytics Platform</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    {% if session.get('user') %}
+    <nav class="navbar">
+        <div class="nav-container">
+            <span class="nav-brand">Analytics Platform</span>
+            <div class="nav-links">
+                <a href="/dashboard" class="nav-link">Dashboard</a>
+                <a href="/anomalies" class="nav-link">Anomalies</a>
+                <a href="/rca" class="nav-link">RCA</a>
+                <a href="/logout" class="nav-link nav-link-logout">Logout</a>
+            </div>
+        </div>
+    </nav>
+    {% endif %}
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>
