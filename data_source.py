@@ -87,15 +87,20 @@ def set_rca_status(id, status):
 def map_anomaly_scores(records):
     """Map raw lab anomaly-score records to UI anomaly dicts.
 
-    Keeps only records where is_anomaly is true, sorts by (vendor,
-    window_start), assigns 1-based ids by position and synthesises the UI
+    Keeps only records where is_anomaly is true, sorts by (vendor, region,
+    site, window_start), assigns 1-based ids by position and synthesises the UI
     fields. Severity is derived from abs(score).
     """
     kept = [r for r in records if r.get('is_anomaly')]
-    kept = sorted(kept, key=lambda r: (r.get('vendor'), r.get('window_start')))
+    kept = sorted(
+        kept,
+        key=lambda r: (r.get('vendor'), r.get('region'), r.get('site'), r.get('window_start')),
+    )
     result = []
     for idx, r in enumerate(kept, start=1):
         vendor = r.get('vendor')
+        region = r.get('region')
+        site = r.get('site')
         metric = r.get('metric')
         score = r.get('score')
         window_start = r.get('window_start')
@@ -108,7 +113,7 @@ def map_anomaly_scores(records):
             severity = 'LOW'
         result.append({
             'id': idx,
-            'description': "{}: {} anomaly (z={:.2f}) at {}".format(vendor, metric, score, window_start),
+            'description': "{}/{} ({}): {} anomaly (z={:.2f}) at {}".format(vendor, site, region, metric, score, window_start),
             'severity': severity,
             'status': 'open',
             'timestamp': window_start,
@@ -119,8 +124,8 @@ def map_anomaly_scores(records):
 def map_rca_rows(rows, include_rca_id=False):
     """Map raw lab rca_results rows (as dicts) to UI RCA record dicts.
 
-    Orders by (vendor, window_start, anomaly_metric), assigns 1-based ids by
-    position and synthesises the UI fields.
+    Orders by (vendor, region, site, window_start, anomaly_metric), assigns
+    1-based ids by position and synthesises the UI fields.
 
     By default the result keeps EXACTLY the demo key set
     ``{id, title, status, root_cause, recommendation}`` so demo output and the
@@ -130,11 +135,15 @@ def map_rca_rows(rows, include_rca_id=False):
     """
     ordered = sorted(
         rows,
-        key=lambda r: (r.get('vendor'), r.get('window_start'), r.get('anomaly_metric')),
+        key=lambda r: (
+            r.get('vendor'), r.get('region'), r.get('site'),
+            r.get('window_start'), r.get('anomaly_metric'),
+        ),
     )
     result = []
     for idx, r in enumerate(ordered, start=1):
         vendor = r.get('vendor')
+        site = r.get('site')
         anomaly_metric = r.get('anomaly_metric')
         window_start = r.get('window_start')
         confidence = r.get('confidence')
@@ -146,7 +155,7 @@ def map_rca_rows(rows, include_rca_id=False):
             recommendation = 'Investigate as a genuine fault (no correlated change).'
         item = {
             'id': idx,
-            'title': "{} {} @ {}".format(vendor, anomaly_metric, window_start),
+            'title': "{}/{} {} @ {}".format(vendor, site, anomaly_metric, window_start),
             'status': status,
             'root_cause': r.get('predicted_root_cause'),
             'recommendation': recommendation,
@@ -199,13 +208,13 @@ def _read_live_rca():
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT rca_id, vendor, window_start, anomaly_metric, "
+            "SELECT rca_id, vendor, region, site, window_start, anomaly_metric, "
             "correlated_incident_id, correlated_change_id, confidence, "
             "predicted_root_cause FROM rca_results "
-            "ORDER BY vendor, window_start, anomaly_metric"
+            "ORDER BY vendor, region, site, window_start, anomaly_metric"
         )
         columns = [
-            'rca_id', 'vendor', 'window_start', 'anomaly_metric',
+            'rca_id', 'vendor', 'region', 'site', 'window_start', 'anomaly_metric',
             'correlated_incident_id', 'correlated_change_id', 'confidence',
             'predicted_root_cause',
         ]
