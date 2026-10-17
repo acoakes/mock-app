@@ -37,20 +37,48 @@ DEMO_RCA = [
 
 
 # ---------------------------------------------------------------------------
-# Per-process status overlays for live-mode mutations (int-keyed)
+# Per-process demo stores (mutated in place by demo-mode POST routes) and
+# status overlays for live-mode mutations (int-keyed)
 # ---------------------------------------------------------------------------
+_demo_anomalies = copy.deepcopy(DEMO_ANOMALIES)
+_demo_rca = copy.deepcopy(DEMO_RCA)
+
 _anomaly_status_overlay = {}
 _rca_status_overlay = {}
 
 
+def _is_live():
+    return os.environ.get('LAB_DATA_SOURCE', 'demo') == 'live'
+
+
 def set_anomaly_status(id, status):
-    """Record a live-mode status override for the anomaly with the given id."""
-    _anomaly_status_overlay[int(id)] = status
+    """Set the status for the anomaly with the given id.
+
+    In live mode the override is recorded in the overlay applied on read; in
+    demo mode the persistent demo store is mutated in place.
+    """
+    if _is_live():
+        _anomaly_status_overlay[int(id)] = status
+    else:
+        for anomaly in _demo_anomalies:
+            if anomaly['id'] == int(id):
+                anomaly['status'] = status
+                break
 
 
 def set_rca_status(id, status):
-    """Record a live-mode status override for the RCA record with the given id."""
-    _rca_status_overlay[int(id)] = status
+    """Set the status for the RCA record with the given id.
+
+    In live mode the override is recorded in the overlay applied on read; in
+    demo mode the persistent demo store is mutated in place.
+    """
+    if _is_live():
+        _rca_status_overlay[int(id)] = status
+    else:
+        for rca in _demo_rca:
+            if rca['id'] == int(id):
+                rca['status'] = status
+                break
 
 
 # ---------------------------------------------------------------------------
@@ -182,9 +210,8 @@ def _read_live_rca():
 # ---------------------------------------------------------------------------
 def get_anomalies():
     """Return anomaly dicts. Live mode falls back to demo data on any error."""
-    mode = os.environ.get('LAB_DATA_SOURCE', 'demo')
-    if mode != 'live':
-        return copy.deepcopy(DEMO_ANOMALIES)
+    if not _is_live():
+        return copy.deepcopy(_demo_anomalies)
     try:
         result = _read_live_anomalies()
         for item in result:
@@ -198,9 +225,8 @@ def get_anomalies():
 
 def get_rca_records():
     """Return RCA record dicts. Live mode falls back to demo data on any error."""
-    mode = os.environ.get('LAB_DATA_SOURCE', 'demo')
-    if mode != 'live':
-        return copy.deepcopy(DEMO_RCA)
+    if not _is_live():
+        return copy.deepcopy(_demo_rca)
     try:
         result = _read_live_rca()
         for item in result:

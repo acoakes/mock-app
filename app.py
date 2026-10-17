@@ -7,22 +7,6 @@ import data_source
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
 
-# In-memory data stores (module-level so POST routes can mutate them)
-anomalies = [
-    {'id': 1, 'description': 'Spike in null values in field user_id', 'severity': 'HIGH', 'status': 'open', 'timestamp': '2024-01-15 14:32:01'},
-    {'id': 2, 'description': 'Processing latency exceeded threshold', 'severity': 'MEDIUM', 'status': 'acknowledged', 'timestamp': '2024-01-15 13:20:45'},
-    {'id': 3, 'description': 'Duplicate records detected in batch 4821', 'severity': 'HIGH', 'status': 'open', 'timestamp': '2024-01-15 12:05:12'},
-    {'id': 4, 'description': 'Missing values in revenue field', 'severity': 'LOW', 'status': 'open', 'timestamp': '2024-01-14 09:44:33'},
-    {'id': 5, 'description': 'Schema mismatch in incoming data feed', 'severity': 'MEDIUM', 'status': 'acknowledged', 'timestamp': '2024-01-14 08:15:20'},
-]
-
-rca_records = [
-    {'id': 1, 'title': 'Null Value Spike Root Cause', 'status': 'resolved', 'root_cause': 'Upstream data pipeline failed validation step', 'recommendation': 'Add validation checkpoint at ingestion layer'},
-    {'id': 2, 'title': 'Latency Threshold Breach Analysis', 'status': 'in_progress', 'root_cause': 'Database query not using index on timestamp column', 'recommendation': 'Add composite index on (timestamp, batch_id)'},
-    {'id': 3, 'title': 'Duplicate Record Investigation', 'status': 'open', 'root_cause': 'Idempotency key not enforced in batch processor', 'recommendation': 'Implement idempotency enforcement in batch processing module'},
-    {'id': 4, 'title': 'Revenue Field Data Quality Issue', 'status': 'open', 'root_cause': 'Source system sending null for optional revenue field', 'recommendation': 'Add default value handling and source system notification'},
-]
-
 
 def login_required(f):
     @wraps(f)
@@ -95,13 +79,7 @@ def anomalies_list():
 @app.route('/anomalies/<int:id>/acknowledge', methods=['POST'])
 @login_required
 def acknowledge_anomaly(id):
-    if os.environ.get('LAB_DATA_SOURCE', 'demo') == 'live':
-        data_source.set_anomaly_status(id, 'acknowledged')
-    else:
-        for anomaly in anomalies:
-            if anomaly['id'] == id:
-                anomaly['status'] = 'acknowledged'
-                break
+    data_source.set_anomaly_status(id, 'acknowledged')
     return redirect(url_for('anomalies_list'))
 
 
@@ -130,13 +108,7 @@ def rca_list():
 def update_rca(id):
     new_status = request.form.get('status', '')
     if new_status in ('open', 'in_progress', 'resolved'):
-        if os.environ.get('LAB_DATA_SOURCE', 'demo') == 'live':
-            data_source.set_rca_status(id, new_status)
-        else:
-            for rca in rca_records:
-                if rca['id'] == id:
-                    rca['status'] = new_status
-                    break
+        data_source.set_rca_status(id, new_status)
     return redirect(url_for('rca_detail', id=id) + '?success=1')
 
 
