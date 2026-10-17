@@ -8,6 +8,16 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
 
 
+def _live_context():
+    """Live-mode flags for the auto-refreshing pages (demo mode -> no refresh)."""
+    live_mode = os.environ.get('LAB_DATA_SOURCE', 'demo') == 'live'
+    try:
+        refresh_seconds = int(os.environ.get('LIVE_REFRESH_SECONDS', '5') or 5)
+    except (TypeError, ValueError):
+        refresh_seconds = 5
+    return live_mode, refresh_seconds
+
+
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -62,7 +72,8 @@ def dashboard():
                 empty_state = True
         except (ValueError, IndexError):
             pass
-    return render_template('dashboard.html', kpis=kpis, date_from=date_from, date_to=date_to, empty_state=empty_state)
+    live_mode, refresh_seconds = _live_context()
+    return render_template('dashboard.html', kpis=kpis, date_from=date_from, date_to=date_to, empty_state=empty_state, live_mode=live_mode, refresh_seconds=refresh_seconds)
 
 
 @app.route('/anomalies')
@@ -73,7 +84,8 @@ def anomalies_list():
     filtered = all_anomalies
     if severity and severity.upper() in ('HIGH', 'MEDIUM', 'LOW'):
         filtered = [a for a in all_anomalies if a['severity'] == severity.upper()]
-    return render_template('anomalies.html', anomalies=filtered, severity=severity)
+    live_mode, refresh_seconds = _live_context()
+    return render_template('anomalies.html', anomalies=filtered, severity=severity, live_mode=live_mode, refresh_seconds=refresh_seconds)
 
 
 @app.route('/anomalies/<int:id>/acknowledge', methods=['POST'])
@@ -100,7 +112,8 @@ def rca_list():
     filtered = all_records
     if status and status in ('open', 'in_progress', 'resolved'):
         filtered = [r for r in all_records if r['status'] == status]
-    return render_template('rca.html', rca_list=filtered, status=status)
+    live_mode, refresh_seconds = _live_context()
+    return render_template('rca.html', rca_list=filtered, status=status, live_mode=live_mode, refresh_seconds=refresh_seconds)
 
 
 @app.route('/rca/<int:id>/update', methods=['POST'])
