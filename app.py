@@ -2,6 +2,8 @@ import os
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, session
 
+import data_source
+
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -83,26 +85,30 @@ def dashboard():
 @login_required
 def anomalies_list():
     severity = request.args.get('severity', '')
-    filtered = anomalies
+    all_anomalies = data_source.get_anomalies()
+    filtered = all_anomalies
     if severity and severity.upper() in ('HIGH', 'MEDIUM', 'LOW'):
-        filtered = [a for a in anomalies if a['severity'] == severity.upper()]
+        filtered = [a for a in all_anomalies if a['severity'] == severity.upper()]
     return render_template('anomalies.html', anomalies=filtered, severity=severity)
 
 
 @app.route('/anomalies/<int:id>/acknowledge', methods=['POST'])
 @login_required
 def acknowledge_anomaly(id):
-    for anomaly in anomalies:
-        if anomaly['id'] == id:
-            anomaly['status'] = 'acknowledged'
-            break
+    if os.environ.get('LAB_DATA_SOURCE', 'demo') == 'live':
+        data_source.set_anomaly_status(id, 'acknowledged')
+    else:
+        for anomaly in anomalies:
+            if anomaly['id'] == id:
+                anomaly['status'] = 'acknowledged'
+                break
     return redirect(url_for('anomalies_list'))
 
 
 @app.route('/anomalies/<int:id>')
 @login_required
 def anomaly_detail(id):
-    anomaly = next((a for a in anomalies if a['id'] == id), None)
+    anomaly = next((a for a in data_source.get_anomalies() if a['id'] == id), None)
     if anomaly is None:
         return redirect(url_for('anomalies_list'))
     return render_template('anomaly_detail.html', anomaly=anomaly)
@@ -112,9 +118,10 @@ def anomaly_detail(id):
 @login_required
 def rca_list():
     status = request.args.get('status', '')
-    filtered = rca_records
+    all_records = data_source.get_rca_records()
+    filtered = all_records
     if status and status in ('open', 'in_progress', 'resolved'):
-        filtered = [r for r in rca_records if r['status'] == status]
+        filtered = [r for r in all_records if r['status'] == status]
     return render_template('rca.html', rca_list=filtered, status=status)
 
 
@@ -122,18 +129,21 @@ def rca_list():
 @login_required
 def update_rca(id):
     new_status = request.form.get('status', '')
-    for rca in rca_records:
-        if rca['id'] == id:
-            if new_status in ('open', 'in_progress', 'resolved'):
-                rca['status'] = new_status
-            break
+    if new_status in ('open', 'in_progress', 'resolved'):
+        if os.environ.get('LAB_DATA_SOURCE', 'demo') == 'live':
+            data_source.set_rca_status(id, new_status)
+        else:
+            for rca in rca_records:
+                if rca['id'] == id:
+                    rca['status'] = new_status
+                    break
     return redirect(url_for('rca_detail', id=id) + '?success=1')
 
 
 @app.route('/rca/<int:id>')
 @login_required
 def rca_detail(id):
-    rca = next((r for r in rca_records if r['id'] == id), None)
+    rca = next((r for r in data_source.get_rca_records() if r['id'] == id), None)
     if rca is None:
         return redirect(url_for('rca_list'))
     success = request.args.get('success')
@@ -166,10 +176,11 @@ def api_anomalies():
     """Return anomalies as JSON, with optional ?severity= filter."""
     severity = request.args.get('severity', '').strip().upper()
     valid = {'HIGH', 'MEDIUM', 'LOW'}
+    all_anomalies = data_source.get_anomalies()
     filtered = (
-        [a for a in anomalies if a['severity'] == severity]
+        [a for a in all_anomalies if a['severity'] == severity]
         if severity in valid
-        else list(anomalies)
+        else list(all_anomalies)
     )
     return jsonify({'anomalies': filtered})
 
@@ -180,9 +191,10 @@ def api_rca():
     """Return RCA records as JSON, with optional ?status= filter."""
     status = request.args.get('status', '').strip().lower()
     valid = {'open', 'in_progress', 'resolved'}
+    all_records = data_source.get_rca_records()
     filtered = (
-        [r for r in rca_records if r['status'] == status]
+        [r for r in all_records if r['status'] == status]
         if status in valid
-        else list(rca_records)
+        else list(all_records)
     )
     return jsonify({'records': filtered})
