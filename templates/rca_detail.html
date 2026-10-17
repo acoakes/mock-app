@@ -46,4 +46,19 @@
         </form>
     </div>
 </div>
+{%- if live_mode %}
+{% if rca_graph and rca_graph.nodes %}
+<div data-testid="rca-graph-panel" class="detail-panel">
+    <h3>RCA Subgraph</h3>
+    <div data-testid="rca-graph" id="rca-graph" class="rca-graph"></div>
+    <script type="application/json" id="rca-graph-data">{{ rca_graph | tojson }}</script>
+    <script src="{{ url_for('static', filename='vendor/cytoscape.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='rca_graph.js') }}"></script>
+</div>
+{% else %}
+<div data-testid="rca-graph-unavailable" class="detail-panel">
+    <p>Graph unavailable.</p>
+</div>
+{% endif %}
+{%- endif %}
 {% endblock %}

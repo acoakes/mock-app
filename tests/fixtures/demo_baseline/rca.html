@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Analytics Platform</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    
+    <nav class="navbar">
+        <div class="nav-container">
+            <span class="nav-brand">Analytics Platform</span>
+            <div class="nav-links">
+                <a href="/dashboard" class="nav-link">Dashboard</a>
+                <a href="/anomalies" class="nav-link">Anomalies</a>
+                <a href="/rca" class="nav-link">RCA</a>
+                <a href="/logout" class="nav-link nav-link-logout">Logout</a>
+            </div>
+        </div>
+    </nav>
+    
+    <div class="container">
+        
+<h1>Root Cause Analysis</h1>
+
+<div class="filter-section">
+    <form method="get" class="filter-form">
+        <div class="form-group form-inline">
+            <label for="status">Status</label>
+            <select id="status" name="status" data-testid="status-filter" class="form-control">
+                <option value="">All</option>
+                <option value="open" >open</option>
+                <option value="in_progress" >in_progress</option>
+                <option value="resolved" >resolved</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Apply</button>
+    </form>
+</div>
+
+<table data-testid="rca-table" class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        
+        <tr data-testid="rca-row" data-id="1">
+            <td>1</td>
+            <td>Null Value Spike Root Cause</td>
+            <td data-testid="rca-status">resolved</td>
+            <td>
+                <a href="/rca/1" class="btn btn-sm btn-secondary">View</a>
+            </td>
+        </tr>
+        
+        <tr data-testid="rca-row" data-id="2">
+            <td>2</td>
+            <td>Latency Threshold Breach Analysis</td>
+            <td data-testid="rca-status">in_progress</td>
+            <td>
+                <a href="/rca/2" class="btn btn-sm btn-secondary">View</a>
+            </td>
+        </tr>
+        
+        <tr data-testid="rca-row" data-id="3">
+            <td>3</td>
+            <td>Duplicate Record Investigation</td>
+            <td data-testid="rca-status">open</td>
+            <td>
+                <a href="/rca/3" class="btn btn-sm btn-secondary">View</a>
+            </td>
+        </tr>
+        
+        <tr data-testid="rca-row" data-id="4">
+            <td>4</td>
+            <td>Revenue Field Data Quality Issue</td>
+            <td data-testid="rca-status">open</td>
+            <td>
+                <a href="/rca/4" class="btn btn-sm btn-secondary">View</a>
+            </td>
+        </tr>
+        
+    </tbody>
+</table>
+
+    </div>
+</body>
+</html>

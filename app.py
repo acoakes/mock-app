@@ -132,7 +132,9 @@ def rca_detail(id):
     if rca is None:
         return redirect(url_for('rca_list'))
     success = request.args.get('success')
-    return render_template('rca_detail.html', rca=rca, success=success)
+    live_mode, _ = _live_context()
+    rca_graph = data_source.get_rca_subgraph(id) if live_mode else None
+    return render_template('rca_detail.html', rca=rca, success=success, live_mode=live_mode, rca_graph=rca_graph)
 
 
 # ---------------------------------------------------------------------------

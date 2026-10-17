@@ -431,3 +431,11 @@ h3 {
     width: 100%;
     padding: 10px 14px;
 }
+/* Live-mode-only RCA subgraph diagram (Cytoscape container). */
+.rca-graph {
+    width: 100%;
+    height: 420px;
+    border: 1px solid #e1e4e8;
+    border-radius: 6px;
+    background: #fafbfc;
+}

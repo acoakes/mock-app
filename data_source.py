@@ -116,11 +116,17 @@ def map_anomaly_scores(records):
     return result
 
 
-def map_rca_rows(rows):
+def map_rca_rows(rows, include_rca_id=False):
     """Map raw lab rca_results rows (as dicts) to UI RCA record dicts.
 
     Orders by (vendor, window_start, anomaly_metric), assigns 1-based ids by
     position and synthesises the UI fields.
+
+    By default the result keeps EXACTLY the demo key set
+    ``{id, title, status, root_cause, recommendation}`` so demo output and the
+    existing ``test_map_rca_rows_keys_unchanged`` stay green. Live callers pass
+    ``include_rca_id=True`` to also carry the lab ``rca_id`` (used to resolve the
+    UI id back to the lab id for the subgraph fetch).
     """
     ordered = sorted(
         rows,
@@ -138,13 +144,16 @@ def map_rca_rows(rows):
             recommendation = "Review and consider rolling back change {}".format(correlated_change_id)
         else:
             recommendation = 'Investigate as a genuine fault (no correlated change).'
-        result.append({
+        item = {
             'id': idx,
             'title': "{} {} @ {}".format(vendor, anomaly_metric, window_start),
             'status': status,
             'root_cause': r.get('predicted_root_cause'),
             'recommendation': recommendation,
-        })
+        }
+        if include_rca_id:
+            item['rca_id'] = r.get('rca_id')
+        result.append(item)
     return result
 
 
@@ -203,7 +212,7 @@ def _read_live_rca():
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
     finally:
         conn.close()
-    return map_rca_rows(rows)
+    return map_rca_rows(rows, include_rca_id=True)
 
 
 # ---------------------------------------------------------------------------
@@ -237,3 +246,41 @@ def get_rca_records():
     except Exception as exc:
         log.warning('Live RCA read failed (%s); falling back to demo data.', exc)
         return copy.deepcopy(DEMO_RCA)
+
+
+# ---------------------------------------------------------------------------
+# Live-mode RCA subgraph (gremlinpython imported lazily, fail-safe to None)
+# ---------------------------------------------------------------------------
+def _resolve_rca_id(ui_id):
+    """Map a UI /rca/<id> to the lab rca_id by scanning the live RCA records.
+
+    Returns the matching record's ``rca_id`` or None if there is no match (or the
+    matched record carries no rca_id). Demo records never carry rca_id, so this
+    naturally returns None outside live mode.
+    """
+    for record in get_rca_records():
+        if record.get('id') == int(ui_id):
+            return record.get('rca_id')
+    return None
+
+
+def get_rca_subgraph(ui_id):
+    """Return the {nodes, edges} RCA subgraph for a UI id, or None.
+
+    Live mode only: returns None in demo mode. In live mode it resolves the UI id
+    to the lab rca_id (None => return None) and lazy-imports rca_graph_client to
+    fetch the subgraph. On ANY exception (Gremlin down, bad data, ...) it logs a
+    warning and returns None so the route can fail safe to a placeholder and never
+    500 (FR-13).
+    """
+    if not _is_live():
+        return None
+    try:
+        rca_id = _resolve_rca_id(ui_id)
+        if rca_id is None:
+            return None
+        import rca_graph_client
+        return rca_graph_client.get_rca_chain(rca_id)
+    except Exception as exc:
+        log.warning('Live RCA subgraph fetch failed (%s); rendering placeholder.', exc)
+        return None

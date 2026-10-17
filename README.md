@@ -109,6 +109,29 @@ are **byte-for-byte unchanged** from before this feature.
 |----------|---------|-------------|
 | `LIVE_REFRESH_SECONDS` | `5` | Auto-refresh interval in seconds for the dashboard/anomalies/RCA pages — live mode only. |
 
+### RCA subgraph visual (live mode only)
+
+In live mode, `GET /rca/<id>` renders a node-link diagram of that record's RCA subgraph
+beneath the detail panel: the anomaly, its root cause (via the `caused_by` edge) and any
+correlated incident/change (via the `correlates_with` edge). The diagram is drawn client-side
+with a **vendored** copy of Cytoscape.js (`static/vendor/cytoscape.min.js`) — there is **no CDN
+request at runtime** — and its data is inlined into the page as JSON (no extra HTTP endpoint).
+
+The app resolves the UI id to the lab `rca_id` and reads the subgraph from the local Gremlin
+server (swappable for managed Amazon Neptune by changing `GREMLIN_URL` only). If Gremlin is
+unreachable, the id does not resolve, or the subgraph is empty, the page fails safe to a
+"Graph unavailable" placeholder and still returns HTTP 200 — it never errors out.
+
+In **demo mode** (the default, `LAB_DATA_SOURCE` unset) none of this renders: no graph panel,
+no placeholder, no new `data-testid`, no `<script>`. The `/rca/<id>` page is **byte-for-byte
+unchanged** from before this feature (locked by `tests/test_demo_byte_compat.py`). The
+`gremlinpython` dependency is imported lazily inside the live read path only, so demo-mode
+imports stay Flask-only.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GREMLIN_URL` | `ws://localhost:8182/gremlin` | Gremlin/Neptune WebSocket endpoint for the live RCA subgraph read — live mode only. |
+
 ## Notes
 
 - All data is held in-memory. Restarting the server resets any changes made via the UI.

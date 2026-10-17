@@ -124,3 +124,64 @@ def test_get_rca_records_demo_titles_unchanged():
         'Duplicate Record Investigation',
         'Revenue Field Data Quality Issue',
     ]
+
+
+# ---------------------------------------------------------------------------
+# map_rca_rows include_rca_id (live-only key)
+# ---------------------------------------------------------------------------
+def test_map_rca_rows_include_rca_id_adds_key():
+    rows = [
+        {'rca_id': 77, 'vendor': 'acme', 'window_start': 'w1', 'anomaly_metric': 'latency', 'correlated_change_id': None, 'confidence': 0.5, 'predicted_root_cause': 'x'},
+    ]
+    result = data_source.map_rca_rows(rows, include_rca_id=True)
+    assert set(result[0].keys()) == {'id', 'title', 'status', 'root_cause', 'recommendation', 'rca_id'}
+    assert result[0]['rca_id'] == 77
+
+
+def test_map_rca_rows_default_omits_rca_id():
+    rows = [
+        {'rca_id': 77, 'vendor': 'acme', 'window_start': 'w1', 'anomaly_metric': 'latency', 'correlated_change_id': None, 'confidence': 0.5, 'predicted_root_cause': 'x'},
+    ]
+    result = data_source.map_rca_rows(rows)
+    assert set(result[0].keys()) == {'id', 'title', 'status', 'root_cause', 'recommendation'}
+
+
+# ---------------------------------------------------------------------------
+# _resolve_rca_id
+# ---------------------------------------------------------------------------
+def test_resolve_rca_id_returns_matching_rca_id(monkeypatch):
+    fake_live = [
+        {'id': 1, 'title': 't1', 'status': 'open', 'root_cause': 'r', 'recommendation': 'x', 'rca_id': 101},
+        {'id': 2, 'title': 't2', 'status': 'open', 'root_cause': 'r', 'recommendation': 'x', 'rca_id': 202},
+    ]
+    monkeypatch.setattr(data_source, 'get_rca_records', lambda: fake_live)
+    assert data_source._resolve_rca_id(2) == 202
+
+
+def test_resolve_rca_id_out_of_range_returns_none(monkeypatch):
+    fake_live = [
+        {'id': 1, 'title': 't1', 'status': 'open', 'root_cause': 'r', 'recommendation': 'x', 'rca_id': 101},
+    ]
+    monkeypatch.setattr(data_source, 'get_rca_records', lambda: fake_live)
+    assert data_source._resolve_rca_id(99) is None
+
+
+# ---------------------------------------------------------------------------
+# get_rca_subgraph (fail-safe)
+# ---------------------------------------------------------------------------
+def test_get_rca_subgraph_demo_mode_returns_none(monkeypatch):
+    monkeypatch.delenv('LAB_DATA_SOURCE', raising=False)
+    assert data_source.get_rca_subgraph(1) is None
+
+
+def test_get_rca_subgraph_fail_safe_on_client_error(monkeypatch):
+    monkeypatch.setenv('LAB_DATA_SOURCE', 'live')
+    monkeypatch.setattr(data_source, '_resolve_rca_id', lambda ui_id: 101)
+
+    import rca_graph_client
+
+    def _boom(rca_id):
+        raise ConnectionError('gremlin down')
+
+    monkeypatch.setattr(rca_graph_client, 'get_rca_chain', _boom)
+    assert data_source.get_rca_subgraph(1) is None
