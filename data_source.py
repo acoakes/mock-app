@@ -130,6 +130,7 @@ def map_rca_rows(rows):
     for idx, r in enumerate(ordered, start=1):
         vendor = r.get('vendor')
         anomaly_metric = r.get('anomaly_metric')
+        window_start = r.get('window_start')
         confidence = r.get('confidence')
         correlated_change_id = r.get('correlated_change_id')
         status = 'in_progress' if confidence is not None and confidence >= 0.8 else 'open'
@@ -139,7 +140,7 @@ def map_rca_rows(rows):
             recommendation = 'Investigate as a genuine fault (no correlated change).'
         result.append({
             'id': idx,
-            'title': "{} {} RCA".format(vendor, anomaly_metric),
+            'title': "{} {} @ {}".format(vendor, anomaly_metric, window_start),
             'status': status,
             'root_cause': r.get('predicted_root_cause'),
             'recommendation': recommendation,

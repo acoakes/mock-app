@@ -66,7 +66,7 @@ def test_map_rca_rows_title_and_root_cause():
         {'rca_id': 10, 'vendor': 'acme', 'window_start': 'w1', 'anomaly_metric': 'latency', 'correlated_incident_id': None, 'correlated_change_id': None, 'confidence': 0.5, 'predicted_root_cause': 'network blip'},
     ]
     result = data_source.map_rca_rows(rows)
-    assert result[0]['title'] == 'acme latency RCA'
+    assert result[0]['title'] == 'acme latency @ w1'
     assert result[0]['root_cause'] == 'network blip'
     assert result[0]['id'] == 1
 
@@ -89,6 +89,38 @@ def test_map_rca_rows_confidence_status():
     ]
     result = data_source.map_rca_rows(rows)
     status_by_title = {r['title']: r['status'] for r in result}
-    assert status_by_title['acme a RCA'] == 'in_progress'
-    assert status_by_title['acme b RCA'] == 'open'
-    assert status_by_title['acme c RCA'] == 'open'
+    assert status_by_title['acme a @ w1'] == 'in_progress'
+    assert status_by_title['acme b @ w2'] == 'open'
+    assert status_by_title['acme c @ w3'] == 'open'
+
+
+def test_map_rca_rows_distinct_window_titles():
+    """Same vendor+metric at different windows must yield distinct titles."""
+    rows = [
+        {'rca_id': 1, 'vendor': 'vendor_c', 'window_start': '2026-10-17T05:20:00Z', 'anomaly_metric': 'rrc_conn_count', 'correlated_change_id': None, 'confidence': 0.5, 'predicted_root_cause': 'x'},
+        {'rca_id': 2, 'vendor': 'vendor_c', 'window_start': '2026-10-17T06:20:00Z', 'anomaly_metric': 'rrc_conn_count', 'correlated_change_id': None, 'confidence': 0.5, 'predicted_root_cause': 'y'},
+    ]
+    result = data_source.map_rca_rows(rows)
+    titles = [r['title'] for r in result]
+    assert titles[0] != titles[1]
+    assert '2026-10-17T05:20:00Z' in titles[0]
+    assert '2026-10-17T06:20:00Z' in titles[1]
+
+
+def test_map_rca_rows_keys_unchanged():
+    rows = [
+        {'rca_id': 1, 'vendor': 'acme', 'window_start': 'w1', 'anomaly_metric': 'latency', 'correlated_change_id': None, 'confidence': 0.5, 'predicted_root_cause': 'x'},
+    ]
+    result = data_source.map_rca_rows(rows)
+    assert set(result[0].keys()) == {'id', 'title', 'status', 'root_cause', 'recommendation'}
+
+
+def test_get_rca_records_demo_titles_unchanged():
+    """Demo mode (no LAB_DATA_SOURCE) must return the fixed DEMO_RCA titles."""
+    titles = [r['title'] for r in data_source.get_rca_records()]
+    assert titles == [
+        'Null Value Spike Root Cause',
+        'Latency Threshold Breach Analysis',
+        'Duplicate Record Investigation',
+        'Revenue Field Data Quality Issue',
+    ]
