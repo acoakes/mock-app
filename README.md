@@ -96,6 +96,19 @@ python run.py
 
 To return to demo mode, clear the variable: `Remove-Item Env:LAB_DATA_SOURCE`.
 
+### Auto-refresh (live mode only)
+
+When `LAB_DATA_SOURCE=live`, the `/dashboard`, `/anomalies`, and `/rca` pages emit a
+`<meta http-equiv="refresh">` tag so they auto-refresh and pick up newly arriving live data.
+`LIVE_REFRESH_SECONDS` (default `5`) controls the interval.
+
+In demo mode (the default, `LAB_DATA_SOURCE` unset) no refresh directive is rendered and the pages
+are **byte-for-byte unchanged** from before this feature.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LIVE_REFRESH_SECONDS` | `5` | Auto-refresh interval in seconds for the dashboard/anomalies/RCA pages — live mode only. |
+
 ## Notes
 
 - All data is held in-memory. Restarting the server resets any changes made via the UI.
