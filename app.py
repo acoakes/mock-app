@@ -1,6 +1,7 @@
 import os
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, session
+from flask_cors import CORS
 
 import data_source
 
@@ -172,55 +173,17 @@ def ingestion():
 
 
 # ---------------------------------------------------------------------------
-# JSON API endpoints (used by automated API tests)
+# JSON REST API blueprint (all /api/* endpoints live in the api/ package).
+# Registered here, after login_required is defined, so the blueprint can reuse
+# the single auth decorator. CORS is scoped to /api/* with credentials for the
+# dev two-origin (SPA) case; the origin is configurable via SPA_ORIGIN.
 # ---------------------------------------------------------------------------
-from flask import jsonify
+from api import create_api_blueprint
 
+app.register_blueprint(create_api_blueprint(login_required))
 
-@app.route('/api/dashboard')
-@login_required
-def api_dashboard():
-    """Return KPI metrics as JSON, with optional ?date_from=&date_to= filter."""
-    date_from = request.args.get('date_from', '')
-    date_to = request.args.get('date_to', '')
-    return jsonify({'kpis': data_source.get_dashboard_kpis(date_from, date_to)})
-
-
-@app.route('/api/anomalies')
-@login_required
-def api_anomalies():
-    """Return anomalies as JSON, with optional ?severity= filter."""
-    severity = request.args.get('severity', '').strip().upper()
-    valid = {'HIGH', 'MEDIUM', 'LOW'}
-    all_anomalies = data_source.get_anomalies()
-    filtered = (
-        [a for a in all_anomalies if a['severity'] == severity]
-        if severity in valid
-        else list(all_anomalies)
-    )
-    return jsonify({'anomalies': filtered})
-
-
-@app.route('/api/rca')
-@login_required
-def api_rca():
-    """Return RCA records as JSON, with optional ?status= filter."""
-    status = request.args.get('status', '').strip().lower()
-    valid = {'open', 'in_progress', 'resolved'}
-    all_records = data_source.get_rca_records()
-    filtered = (
-        [r for r in all_records if r['status'] == status]
-        if status in valid
-        else list(all_records)
-    )
-    return jsonify({'records': filtered})
-
-
-@app.route('/api/ingestion')
-@login_required
-def api_ingestion():
-    """Return the live ingestion feed (PM files + tickets) as JSON."""
-    return jsonify({
-        'pm_files': data_source.get_pm_ingestion(),
-        'tickets': data_source.get_ticket_feed(),
-    })
+CORS(
+    app,
+    resources={r"/api/*": {"origins": [os.environ.get('SPA_ORIGIN', 'http://localhost:3000')]}},
+    supports_credentials=True,
+)
