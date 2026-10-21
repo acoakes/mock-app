@@ -35,6 +35,17 @@ DEMO_RCA = [
     {'id': 4, 'title': 'Revenue Field Data Quality Issue', 'status': 'open', 'root_cause': 'Source system sending null for optional revenue field', 'recommendation': 'Add default value handling and source system notification'},
 ]
 
+DEMO_PM_FILES = [
+    {'key': 'vendor_a/vendora_pm.csv', 'vendor': 'vendor_a', 'size': 1838, 'stage': 'parsed', 'records': 26},
+    {'key': 'vendor_b/vendorb_pm.json', 'vendor': 'vendor_b', 'size': 4024, 'stage': 'parsed', 'records': 26},
+    {'key': 'vendor_c/vendorc_pm.json', 'vendor': 'vendor_c', 'size': 3745, 'stage': 'ingested', 'records': None},
+]
+
+DEMO_TICKETS = [
+    {'ticket_id': 'INC-00001', 'ticket_type': 'incident', 'vendor': 'vendor_a', 'window_start': '2024-01-15T14:40:00Z', 'summary': 'Latency spike at site-0207'},
+    {'ticket_id': 'CHG-00003', 'ticket_type': 'change', 'vendor': 'vendor_b', 'window_start': '2024-01-15T14:20:00Z', 'summary': 'Config rollout at site-0411'},
+]
+
 
 # ---------------------------------------------------------------------------
 # Per-process demo stores (mutated in place by demo-mode POST routes) and
@@ -293,3 +304,126 @@ def get_rca_subgraph(ui_id):
     except Exception as exc:
         log.warning('Live RCA subgraph fetch failed (%s); rendering placeholder.', exc)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Live-mode ingestion feed: PM files (S3) + tickets (DynamoDB)
+# ---------------------------------------------------------------------------
+def _read_live_pm_files():
+    """List PM files in S3, deriving a processing stage per file.
+
+    A file is 'ingested' once it lands in pm-raw; it becomes 'parsed' once a
+    matching normalized object exists under pm-aggregated/normalized/ (with the
+    CSV/JSON extension swapped to .json, as CDF writes). Newest first.
+    """
+    import boto3
+
+    client = boto3.client(
+        's3',
+        endpoint_url=os.environ.get('LAB_S3_ENDPOINT', 'http://localhost:4566'),
+        aws_access_key_id='test',
+        aws_secret_access_key='test',
+        region_name='us-east-1',
+    )
+
+    # Collect normalized keys (CDF output) for stage derivation + record counts.
+    normalized = {}
+    norm_listing = client.list_objects_v2(Bucket='pm-aggregated', Prefix='normalized/')
+    for obj in norm_listing.get('Contents', []):
+        # normalized/<vendor>/<file>.json  -> keyed by "<vendor>/<file>.json"
+        rel = obj['Key'][len('normalized/'):]
+        normalized[rel] = obj
+
+    files = []
+    raw_listing = client.list_objects_v2(Bucket='pm-raw')
+    for obj in raw_listing.get('Contents', []):
+        key = obj['Key']  # "<vendor>/<file>.<ext>"
+        vendor = key.split('/', 1)[0] if '/' in key else ''
+        # CDF writes normalized output as .json regardless of source extension.
+        base = key.rsplit('.', 1)[0]
+        norm_key = base + '.json'
+        parsed_obj = normalized.get(norm_key)
+        records = None
+        if parsed_obj is not None:
+            # Derive record count from the normalized object. CDF may write either a
+            # JSON array or line-delimited JSON, so handle both.
+            try:
+                body = client.get_object(Bucket='pm-aggregated', Key='normalized/' + norm_key)['Body'].read()
+                text = body.decode('utf-8').strip()
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    records = len(parsed)
+                else:
+                    records = 1
+            except json.JSONDecodeError:
+                # Fall back to counting non-empty lines (line-delimited JSON).
+                records = sum(1 for ln in text.splitlines() if ln.strip())
+            except Exception:
+                records = None
+        files.append({
+            'key': key,
+            'vendor': vendor,
+            'size': obj.get('Size', 0),
+            'stage': 'parsed' if parsed_obj is not None else 'ingested',
+            'records': records,
+            'last_modified': obj.get('LastModified'),
+        })
+
+    files.sort(key=lambda f: (f.get('last_modified') is not None, f.get('last_modified')), reverse=True)
+    # Strip the datetime before returning (not JSON-serialisable / not needed in UI).
+    for f in files:
+        f.pop('last_modified', None)
+    return files
+
+
+def _read_live_tickets():
+    """Scan the accumulating ticketing-feed DynamoDB table. Newest first."""
+    import boto3
+
+    client = boto3.client(
+        'dynamodb',
+        endpoint_url=os.environ.get('LAB_S3_ENDPOINT', 'http://localhost:4566'),
+        aws_access_key_id='test',
+        aws_secret_access_key='test',
+        region_name='us-east-1',
+    )
+
+    tickets = []
+    paginator = client.get_paginator('scan')
+    for page in paginator.paginate(TableName='ticketing-feed'):
+        for item in page.get('Items', []):
+            def _s(name):
+                cell = item.get(name, {})
+                return cell.get('S') or cell.get('N') or ''
+            tickets.append({
+                'ticket_id': _s('ticket_id') or _s('sk'),
+                'ticket_type': _s('ticket_type') or _s('type'),
+                'vendor': _s('vendor') or _s('pk'),
+                'window_start': _s('window_start'),
+                'summary': _s('summary') or _s('description'),
+            })
+
+    tickets.sort(key=lambda t: t.get('window_start') or '', reverse=True)
+    return tickets
+
+
+def get_pm_ingestion():
+    """Return PM-file ingestion rows. Live mode falls back to demo data on error."""
+    if not _is_live():
+        return copy.deepcopy(DEMO_PM_FILES)
+    try:
+        return _read_live_pm_files()
+    except Exception as exc:
+        log.warning('Live PM-file read failed (%s); falling back to demo data.', exc)
+        return copy.deepcopy(DEMO_PM_FILES)
+
+
+def get_ticket_feed():
+    """Return ticket-feed rows. Live mode falls back to demo data on error."""
+    if not _is_live():
+        return copy.deepcopy(DEMO_TICKETS)
+    try:
+        return _read_live_tickets()
+    except Exception as exc:
+        log.warning('Live ticket read failed (%s); falling back to demo data.', exc)
+        return copy.deepcopy(DEMO_TICKETS)

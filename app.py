@@ -137,6 +137,21 @@ def rca_detail(id):
     return render_template('rca_detail.html', rca=rca, success=success, live_mode=live_mode, rca_graph=rca_graph)
 
 
+@app.route('/ingestion')
+@login_required
+def ingestion():
+    pm_files = data_source.get_pm_ingestion()
+    tickets = data_source.get_ticket_feed()
+    live_mode, refresh_seconds = _live_context()
+    return render_template(
+        'ingestion.html',
+        pm_files=pm_files,
+        tickets=tickets,
+        live_mode=live_mode,
+        refresh_seconds=refresh_seconds,
+    )
+
+
 # ---------------------------------------------------------------------------
 # JSON API endpoints (used by automated API tests)
 # ---------------------------------------------------------------------------
@@ -185,3 +200,13 @@ def api_rca():
         else list(all_records)
     )
     return jsonify({'records': filtered})
+
+
+@app.route('/api/ingestion')
+@login_required
+def api_ingestion():
+    """Return the live ingestion feed (PM files + tickets) as JSON."""
+    return jsonify({
+        'pm_files': data_source.get_pm_ingestion(),
+        'tickets': data_source.get_ticket_feed(),
+    })

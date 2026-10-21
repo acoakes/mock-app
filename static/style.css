@@ -439,3 +439,30 @@ h3 {
     border-radius: 6px;
     background: #fafbfc;
 }
+
+/* Ingestion feed badges */
+.muted {
+    color: #7f8c8d;
+    font-size: 0.9em;
+    margin-top: -8px;
+}
+
+.stage-ingested {
+    color: #e67e22;
+    font-weight: 600;
+}
+
+.stage-parsed {
+    color: #27ae60;
+    font-weight: 600;
+}
+
+.ticket-incident {
+    color: #c0392b;
+    font-weight: 600;
+}
+
+.ticket-change {
+    color: #2980b9;
+    font-weight: 600;
+}
