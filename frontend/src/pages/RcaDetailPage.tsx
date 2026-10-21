@@ -21,7 +21,11 @@ export default function RcaDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const { data, isError } = useGetRcaQuery(rcaId);
-  const { data: graph } = useGetRcaGraphQuery(rcaId);
+  const {
+    data: graph,
+    isLoading: graphLoading,
+    isError: graphError,
+  } = useGetRcaGraphQuery(rcaId);
   const [updateStatus] = useUpdateRcaStatusMutation();
 
   const [statusValue, setStatusValue] = useState('');
@@ -110,8 +114,7 @@ export default function RcaDetailPage() {
         </div>
       </DetailPanel>
 
-      {/* DEFERRED placeholder panel (step 3 wires the real Cytoscape render). */}
-      <RcaGraph data={graph} />
+      <RcaGraph data={graph} isLoading={graphLoading} isError={graphError} />
     </>
   );
 }
