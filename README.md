@@ -6,6 +6,28 @@ A mock Flask web application serving as a realistic test target for BDD/Behave +
 
 This app simulates a data analytics platform with KPI dashboards, anomaly detection, and root cause analysis (RCA) pages. It is designed to be tested by the BDD/Playwright framework in this project — all routes have `data-testid` attributes for reliable selector targeting.
 
+## Architecture (two tiers, running in parallel)
+
+The app is mid-migration from a server-rendered Flask UI to a React single-page
+application that mirrors the work "ARC" stack (React 18 SPA on S3). Both tiers
+currently run in parallel against the same data layer — nothing has been cut over
+yet, so the Flask HTML UI is still fully functional.
+
+- **Flask (`app.py`, `templates/`)** — the original server-rendered Jinja UI plus a
+  new pure-JSON REST API blueprint (`api/`). Both are served by the same Flask
+  process. The REST API is a thin wrapper over the shared, view-independent data
+  layer (`data_source.py`) and is the foundation the SPA builds against.
+- **React SPA (`frontend/`)** — a Vite + React 18 + TypeScript app (Redux Toolkit +
+  RTK Query + React Router v6) consuming the REST API. See
+  [`frontend/`](#react-spa-frontend) below.
+
+The migration is tracked by the approved design doc at
+`aws-lab/.agents/designs/ui-react-migration-design.md`. Completed so far: the REST
+API carve-out, the React SPA (all pages, ARC stand-in component library, dashboard
+charts, Cytoscape RCA graph), and the session-cookie auth flow. Still pending: the
+Jinja cut-over (Flask serving the built SPA + retiring templates) and the CI build
+step.
+
 ## Prerequisites
 
 - Python 3.8 or higher
@@ -43,11 +65,93 @@ Any non-empty username and password combination will work:
 | `/rca` | Root cause analysis list with status filter |
 | `/rca/<id>` | RCA detail with status update form |
 
+## REST API (`/api`)
+
+A pure-JSON API blueprint (`api/`) served by the same Flask process, consumed by the
+React SPA. All data endpoints require an authenticated session cookie; the data layer
+falls back to demo data on any backend error, so they do not 5xx on a lab outage.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/login` | Log in with `{username, password}` (any non-empty pair) |
+| `GET` | `/api/session` | Current session: `{authenticated, user, mode, refresh_seconds}` |
+| `POST` | `/api/logout` | Clear the session |
+| `GET` | `/api/dashboard?date_from=&date_to=` | KPI list (exactly 5 KPIs) |
+| `GET` | `/api/charts?date_from=&date_to=` | Dashboard chart datasets (by vendor / severity / over time) |
+| `GET` | `/api/anomalies?severity=` | Anomaly list |
+| `GET` | `/api/anomalies/<id>` | Single anomaly (`404` if absent) |
+| `POST` | `/api/anomalies/<id>/acknowledge` | Acknowledge an anomaly |
+| `GET` | `/api/rca?status=` | RCA record list |
+| `GET` | `/api/rca/<id>` | Single RCA record (`404` if absent) |
+| `POST` | `/api/rca/<id>/status` | Update RCA status (`{status}`; `400` on invalid) |
+| `GET` | `/api/rca/<id>/graph` | RCA subgraph for the Cytoscape view (empty graph when unavailable) |
+
+CORS is enabled for `/api/*` with credentials, scoped to the SPA origin via the
+`SPA_ORIGIN` env var (default `http://localhost:3000`). This is only needed for a
+two-origin setup; the recommended dev setup uses the Vite proxy (below) for a single
+origin, so cookies work without CORS.
+
+## React SPA (`frontend/`)
+
+A Vite + React 18 + TypeScript single-page app (Redux Toolkit + RTK Query + React
+Router v6) built against the REST API, approximating the work "ARC" stack. ARC itself
+is proprietary and cannot be installed here, so the SPA uses a home-grown stand-in
+component library under `src/components/arc/` (imported via the `@arc` alias) with clean
+prop contracts so the real ARC could drop in later.
+
+Highlights:
+
+- Mirrors the Flask routes (`/login`, `/dashboard`, `/anomalies`, `/anomalies/:id`,
+  `/rca`, `/rca/:id`, `/ingestion`) and reproduces the same `data-testid` values so the
+  existing BDD page objects keep working after cut-over.
+- Dashboard charts via `react-chartjs-2`; the RCA detail graph via `react-cytoscapejs`
+  (both the same underlying libraries the Flask app vendored).
+- Session-cookie auth: `credentials: 'include'`, session rehydrate on reload, and a
+  global 401 handler that returns to the login page on session expiry.
+- Live-mode refresh is handled by RTK Query polling (driven by the `/api/session`
+  `mode`/`refresh_seconds` fields) behind a `useLivePolling` seam — the swap-in point
+  for a future WebSocket channel.
+
+### Running the SPA (dev)
+
+The SPA needs the Flask API running (for `/api`), then the Vite dev server proxies
+`/api` to Flask on `:5000` so the session cookie works single-origin.
+
+```powershell
+# 1. Start the Flask API (serves /api + the legacy HTML UI) in one terminal:
+cd mock-app
+python run.py            # http://localhost:5000
+
+# 2. In another terminal, start the SPA dev server:
+cd mock-app\frontend
+$env:NODE_OPTIONS="--use-system-ca"   # required behind the corporate TLS proxy
+npm install
+npm run dev              # Vite prints the dev URL; it proxies /api -> http://localhost:5000
+```
+
+Open the URL Vite prints (Vite's default dev port is `5173`). Because the dev server
+proxies `/api` to Flask, the browser sees a single origin and the session cookie works
+without CORS. The `SPA_ORIGIN` CORS variable is only needed if you instead serve the SPA
+from a separate origin and talk to Flask cross-origin.
+
+> **Corporate-proxy note:** `NODE_OPTIONS=--use-system-ca` is required for `npm install`
+> and any `npx`/Vite command on the proxied network, or they fail with TLS cert errors.
+
+### npm scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm run dev` | Vite dev server with the `/api` → Flask proxy |
+| `npm run build` | Type-check (`tsc --noEmit`) + production build to `frontend/dist/` |
+| `npm run preview` | Serve the production build locally |
+| `npm run test` | Run the Vitest unit suite |
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FLASK_SECRET_KEY` | `dev-secret-key-change-in-production` | Session signing key — **change this in production** |
+| `SPA_ORIGIN` | `http://localhost:3000` | Allowed CORS origin for `/api/*` (two-origin setup only; the Vite proxy avoids needing this) |
 
 ## AWS lab integration (live data)
 
