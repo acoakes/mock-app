@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Banner, Button, TextField } from '@arc';
 import { useLoginMutation } from '../api/apiSlice';
 import { useAppDispatch } from '../store/hooks';
@@ -8,6 +8,7 @@ import { TESTIDS } from '../testids';
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const dispatch = useAppDispatch();
   const [login] = useLoginMutation();
 
@@ -22,8 +23,16 @@ export default function LoginPage() {
       const res = await login({ username, password }).unwrap();
       if (res.authenticated && res.user) {
         dispatch(setAuthenticated(res.user));
-        // HARD contract: login_page.py::login() waits for **/dashboard**.
-        navigate('/dashboard');
+        // login invalidatesTags:['Session'], which refetches the root-mounted
+        // getSession in App.tsx, picking up mode/refresh_seconds — no explicit
+        // refetch needed here.
+        // Navigate to the originally-requested route (preserved by RequireAuth
+        // in location.state.from) or the /dashboard default. The /dashboard
+        // default is a HARD contract: login_page.py::login() waits for
+        // **/dashboard**, so a bare login (no `from`) MUST land on /dashboard.
+        const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname;
+        const dest = from && from !== '/login' ? from : '/dashboard';
+        navigate(dest, { replace: true });
         return;
       }
       setError('Invalid credentials');
