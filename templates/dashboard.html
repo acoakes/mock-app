@@ -11,7 +11,24 @@
     {% endfor %}
 </div>
 
-<div data-testid="dashboard-chart" class="chart-placeholder">Chart Placeholder</div>
+<div data-testid="dashboard-chart" class="chart-section">
+    <div class="chart-card">
+        <h3>Anomalies by Vendor</h3>
+        <canvas id="chart-by-vendor" height="220"></canvas>
+    </div>
+    <div class="chart-card">
+        <h3>Anomalies by Severity</h3>
+        <canvas id="chart-by-severity" height="220"></canvas>
+    </div>
+    <div class="chart-card chart-card-wide">
+        <h3>Anomalies Over Time</h3>
+        <canvas id="chart-over-time" height="220"></canvas>
+    </div>
+</div>
+
+<script type="application/json" id="dashboard-chart-data">{{ charts_json | safe }}</script>
+<script src="{{ url_for('static', filename='vendor/chart.min.js') }}"></script>
+<script src="{{ url_for('static', filename='dashboard_charts.js') }}"></script>
 
 <div class="filter-section">
     <h2>Date Filter</h2>

@@ -46,6 +46,25 @@ DEMO_TICKETS = [
     {'ticket_id': 'CHG-00003', 'ticket_type': 'change', 'vendor': 'vendor_b', 'window_start': '2024-01-15T14:20:00Z', 'summary': 'Config rollout at site-0411'},
 ]
 
+# Static demo chart data (byte-identical for the BDD tests, which run in demo mode).
+DEMO_CHARTS = {
+    'by_vendor': {'labels': ['vendor_a', 'vendor_b', 'vendor_c'], 'values': [3, 1, 1]},
+    'by_severity': {'labels': ['HIGH', 'MEDIUM', 'LOW'], 'values': [2, 2, 1]},
+    'over_time': {
+        'labels': ['2024-01-15T12:00:00Z', '2024-01-15T13:00:00Z', '2024-01-15T14:00:00Z'],
+        'values': [1, 2, 2],
+    },
+}
+
+# Static demo KPIs (byte-identical for the BDD tests, which run in demo mode).
+DEMO_KPIS = [
+    {'name': 'Throughput', 'value': '94.2', 'unit': '%'},
+    {'name': 'Data Quality Score', 'value': '87.5', 'unit': '%'},
+    {'name': 'Anomaly Rate', 'value': '3.1', 'unit': '%'},
+    {'name': 'Processing Latency', 'value': '142', 'unit': 'ms'},
+    {'name': 'Records Processed', 'value': '1,284,302', 'unit': ''},
+]
+
 
 # ---------------------------------------------------------------------------
 # Per-process demo stores (mutated in place by demo-mode POST routes) and
@@ -56,6 +75,22 @@ _demo_rca = copy.deepcopy(DEMO_RCA)
 
 _anomaly_status_overlay = {}
 _rca_status_overlay = {}
+
+
+def reset_demo_state():
+    """Restore the demo stores and live-mode status overlays to their defaults.
+
+    Used only for test isolation (a demo-mode /__reset endpoint calls this): the
+    demo POST routes mutate _demo_anomalies / _demo_rca in place, so without a
+    reset those mutations persist across scenarios and break non-idempotent
+    tests (e.g. a scenario that needs an 'in_progress' RCA record after a prior
+    scenario resolved it).
+    """
+    global _demo_anomalies, _demo_rca
+    _demo_anomalies = copy.deepcopy(DEMO_ANOMALIES)
+    _demo_rca = copy.deepcopy(DEMO_RCA)
+    _anomaly_status_overlay.clear()
+    _rca_status_overlay.clear()
 
 
 def _is_live():
@@ -180,17 +215,21 @@ def map_rca_rows(rows, include_rca_id=False):
 # ---------------------------------------------------------------------------
 # Live readers (boto3 / pg8000 imported lazily inside)
 # ---------------------------------------------------------------------------
-def _read_live_anomalies():
-    """Read anomaly-score jsonl objects from the lab S3 bucket."""
+def _s3_client():
     import boto3
 
-    client = boto3.client(
+    return boto3.client(
         's3',
         endpoint_url=os.environ.get('LAB_S3_ENDPOINT', 'http://localhost:4566'),
         aws_access_key_id='test',
         aws_secret_access_key='test',
         region_name='us-east-1',
     )
+
+
+def _read_live_score_records():
+    """Read ALL raw anomaly-score records (anomalous and not) from S3."""
+    client = _s3_client()
     all_records = []
     listing = client.list_objects_v2(Bucket='pm-anomaly-scores')
     for obj in listing.get('Contents', []):
@@ -202,7 +241,73 @@ def _read_live_anomalies():
             if not line:
                 continue
             all_records.append(json.loads(line))
-    return map_anomaly_scores(all_records)
+    return all_records
+
+
+def _mean_throughput_mbps():
+    """Mean of the throughput_mbps metric across the aggregated events (agg/ prefix).
+
+    Reads the CDF aggregate output under s3://pm-aggregated/agg/ and averages the
+    per-event 'mean' for the throughput_mbps metric. Returns None if no such events
+    exist (so the caller can fall back to a placeholder).
+    """
+    client = _s3_client()
+    means = []
+    paginator = client.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket='pm-aggregated', Prefix='agg/'):
+        for obj in page.get('Contents', []):
+            key = obj['Key']
+            # agg/<vendor>/<region>/<site>/<metric>/<window>.json
+            if '/throughput_mbps/' not in key:
+                continue
+            body = client.get_object(Bucket='pm-aggregated', Key=key)['Body'].read()
+            event = json.loads(body.decode('utf-8'))
+            if event.get('mean') is not None:
+                means.append(float(event['mean']))
+    if not means:
+        return None
+    return sum(means) / len(means)
+
+
+def _count_raw_rows(client, key):
+    """Count data rows in a raw PM file: CSV lines minus header, or JSON array length."""
+    body = client.get_object(Bucket='pm-raw', Key=key)['Body'].read()
+    text = body.decode('utf-8').strip()
+    if not text:
+        return 0
+    if key.lower().endswith('.json'):
+        try:
+            parsed = json.loads(text)
+            return len(parsed) if isinstance(parsed, list) else 1
+        except json.JSONDecodeError:
+            return sum(1 for ln in text.splitlines() if ln.strip())
+    # CSV: non-empty lines minus the header row.
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return max(0, len(lines) - 1)
+
+
+def _data_quality_score(pm_files):
+    """DQS = parsed records / submitted raw rows, as a percentage.
+
+    'parsed' is the normalized record count already derived per file; 'submitted'
+    is the raw row count read from pm-raw. Returns None if nothing has been
+    submitted yet (caller falls back to a placeholder).
+    """
+    client = _s3_client()
+    submitted = 0
+    parsed = 0
+    for f in pm_files:
+        parsed += f.get('records') or 0
+        submitted += _count_raw_rows(client, f['key'])
+    if submitted <= 0:
+        return None
+    # Parsed can never exceed submitted; clamp defensively against count skew.
+    return 100.0 * min(parsed, submitted) / submitted
+
+
+def _read_live_anomalies():
+    """Read anomaly-score jsonl objects from the lab S3 bucket."""
+    return map_anomaly_scores(_read_live_score_records())
 
 
 def _read_live_rca():
@@ -427,3 +532,143 @@ def get_ticket_feed():
     except Exception as exc:
         log.warning('Live ticket read failed (%s); falling back to demo data.', exc)
         return copy.deepcopy(DEMO_TICKETS)
+
+
+# ---------------------------------------------------------------------------
+# Date-range filtering (shared by KPIs and charts)
+# ---------------------------------------------------------------------------
+def _in_date_range(ts, date_from, date_to):
+    """True if the ISO timestamp's date (first 10 chars) is within [from, to].
+
+    Either bound may be empty/None (open-ended). Comparison is lexicographic on
+    the YYYY-MM-DD prefix, which is correct for ISO-8601 dates.
+    """
+    if not ts:
+        return not (date_from or date_to)
+    day = ts[:10]
+    if date_from and day < date_from:
+        return False
+    if date_to and day > date_to:
+        return False
+    return True
+
+
+def _filter_anomalies_by_date(anomalies, date_from, date_to):
+    if not date_from and not date_to:
+        return anomalies
+    return [a for a in anomalies if _in_date_range(a.get('timestamp', ''), date_from, date_to)]
+
+
+# ---------------------------------------------------------------------------
+# Live-mode dashboard KPIs (derived from real lab data, demo fallback)
+# ---------------------------------------------------------------------------
+def get_dashboard_kpis(date_from='', date_to=''):
+    """Return the dashboard KPI list.
+
+    Demo mode returns the static DEMO_KPIS (kept byte-identical for the BDD
+    tests). Live mode derives real metrics from the lab, optionally filtered to
+    the [date_from, date_to] range (YYYY-MM-DD, either open-ended):
+      * Records Processed = total normalized PM records across all files
+      * Anomaly Rate      = anomalies / total scored records, as a percentage
+    Throughput and Data Quality Score are derived from live data; Processing
+    Latency has no real source so it stays a placeholder. Any failure falls
+    back to DEMO_KPIS.
+    """
+    if not _is_live():
+        return copy.deepcopy(DEMO_KPIS)
+    try:
+        score_records = _read_live_score_records()
+        if date_from or date_to:
+            score_records = [
+                r for r in score_records
+                if _in_date_range(r.get('window_start', ''), date_from, date_to)
+            ]
+        total_scored = len(score_records)
+        anomaly_count = sum(1 for r in score_records if r.get('is_anomaly'))
+        pm_files = _read_live_pm_files()
+        records_processed = sum(f['records'] for f in pm_files if f.get('records'))
+
+        if total_scored > 0:
+            anomaly_rate = '{:.1f}'.format(100.0 * anomaly_count / total_scored)
+        else:
+            anomaly_rate = '0.0'
+
+        # Throughput: mean of the real throughput_mbps metric across aggregates.
+        mean_tput = _mean_throughput_mbps()
+        throughput = ('{:.1f}'.format(mean_tput), 'mbps') if mean_tput is not None else ('94.2', '%')
+
+        # Data Quality Score: parsed / submitted raw rows.
+        dqs = _data_quality_score(pm_files)
+        dqs_value = '{:.1f}'.format(dqs) if dqs is not None else '87.5'
+
+        # Same five KPI names as demo mode (keeps the "exactly 5" contract), but
+        # Throughput / Data Quality Score / Anomaly Rate / Records Processed are
+        # derived from live lab data. Processing Latency has no lab source, so it
+        # stays a stable placeholder in both modes.
+        return [
+            {'name': 'Throughput', 'value': throughput[0], 'unit': throughput[1]},
+            {'name': 'Data Quality Score', 'value': dqs_value, 'unit': '%'},
+            {'name': 'Anomaly Rate', 'value': anomaly_rate, 'unit': '%'},
+            {'name': 'Processing Latency', 'value': '142', 'unit': 'ms'},
+            {'name': 'Records Processed', 'value': '{:,}'.format(records_processed), 'unit': ''},
+        ]
+    except Exception as exc:
+        log.warning('Live KPI build failed (%s); falling back to demo KPIs.', exc)
+        return copy.deepcopy(DEMO_KPIS)
+
+
+# ---------------------------------------------------------------------------
+# Live-mode dashboard charts (anomalies by vendor / severity / over time)
+# ---------------------------------------------------------------------------
+def get_anomaly_charts(date_from='', date_to=''):
+    """Return chart datasets for the dashboard.
+
+    Demo mode returns the static DEMO_CHARTS (byte-identical for the BDD tests).
+    Live mode derives three datasets from the live anomaly list, optionally
+    filtered to the [date_from, date_to] range (YYYY-MM-DD, either open-ended):
+      * by_vendor   - anomaly count per vendor (bar)
+      * by_severity - anomaly count per HIGH/MEDIUM/LOW (doughnut)
+      * over_time   - anomaly count per window_start, chronological (line)
+    Each dataset is {'labels': [...], 'values': [...]}. Any failure falls back
+    to DEMO_CHARTS.
+    """
+    if not _is_live():
+        return copy.deepcopy(DEMO_CHARTS)
+    try:
+        anomalies = _filter_anomalies_by_date(get_anomalies(), date_from, date_to)
+
+        # by_vendor — the live anomaly 'description' starts "<vendor>/<site> ...",
+        # so derive the vendor from the leading token before the first '/'.
+        vendor_counts = {}
+        for a in anomalies:
+            desc = a.get('description', '')
+            vendor = desc.split('/', 1)[0].strip() if '/' in desc else 'unknown'
+            vendor_counts[vendor] = vendor_counts.get(vendor, 0) + 1
+        vendors = sorted(vendor_counts)
+        by_vendor = {'labels': vendors, 'values': [vendor_counts[v] for v in vendors]}
+
+        # by_severity — fixed HIGH/MEDIUM/LOW ordering.
+        sev_order = ['HIGH', 'MEDIUM', 'LOW']
+        sev_counts = {s: 0 for s in sev_order}
+        for a in anomalies:
+            sev = a.get('severity')
+            if sev in sev_counts:
+                sev_counts[sev] += 1
+        by_severity = {'labels': sev_order, 'values': [sev_counts[s] for s in sev_order]}
+
+        # over_time — count anomalies per window_start (timestamp), chronological.
+        time_counts = {}
+        for a in anomalies:
+            ts = a.get('timestamp', '')
+            time_counts[ts] = time_counts.get(ts, 0) + 1
+        times = sorted(t for t in time_counts if t)
+        over_time = {'labels': times, 'values': [time_counts[t] for t in times]}
+
+        return {
+            'by_vendor': by_vendor,
+            'by_severity': by_severity,
+            'over_time': over_time,
+        }
+    except Exception as exc:
+        log.warning('Live chart build failed (%s); falling back to demo charts.', exc)
+        return copy.deepcopy(DEMO_CHARTS)

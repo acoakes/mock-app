@@ -52,18 +52,28 @@ def logout():
     return redirect(url_for('login'))
 
 
+@app.route('/__reset', methods=['POST'])
+def __reset():
+    """Test-isolation hook: restore demo stores to defaults (demo mode only).
+
+    Lets the BDD suite reset per-scenario state so demo-mode POST mutations
+    (acknowledge anomaly, update RCA status) don't leak between scenarios. Not
+    available in live mode, where data comes from the lab, not in-process stores.
+    """
+    if os.environ.get('LAB_DATA_SOURCE', 'demo') == 'live':
+        return {'reset': False, 'reason': 'live mode'}, 200
+    data_source.reset_demo_state()
+    return {'reset': True}, 200
+
+
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    kpis = [
-        {'name': 'Throughput', 'value': '94.2', 'unit': '%'},
-        {'name': 'Data Quality Score', 'value': '87.5', 'unit': '%'},
-        {'name': 'Anomaly Rate', 'value': '3.1', 'unit': '%'},
-        {'name': 'Processing Latency', 'value': '142', 'unit': 'ms'},
-        {'name': 'Records Processed', 'value': '1,284,302', 'unit': ''},
-    ]
+    import json as _json
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    kpis = data_source.get_dashboard_kpis(date_from, date_to)
+    charts = data_source.get_anomaly_charts(date_from, date_to)
     empty_state = False
     if date_to:
         try:
@@ -73,7 +83,16 @@ def dashboard():
         except (ValueError, IndexError):
             pass
     live_mode, refresh_seconds = _live_context()
-    return render_template('dashboard.html', kpis=kpis, date_from=date_from, date_to=date_to, empty_state=empty_state, live_mode=live_mode, refresh_seconds=refresh_seconds)
+    return render_template(
+        'dashboard.html',
+        kpis=kpis,
+        charts_json=_json.dumps(charts),
+        date_from=date_from,
+        date_to=date_to,
+        empty_state=empty_state,
+        live_mode=live_mode,
+        refresh_seconds=refresh_seconds,
+    )
 
 
 @app.route('/anomalies')
@@ -161,15 +180,10 @@ from flask import jsonify
 @app.route('/api/dashboard')
 @login_required
 def api_dashboard():
-    """Return KPI metrics as JSON."""
-    kpis = [
-        {'name': 'Throughput', 'value': '94.2', 'unit': '%'},
-        {'name': 'Data Quality Score', 'value': '87.5', 'unit': '%'},
-        {'name': 'Anomaly Rate', 'value': '3.1', 'unit': '%'},
-        {'name': 'Processing Latency', 'value': '142', 'unit': 'ms'},
-        {'name': 'Records Processed', 'value': '1,284,302', 'unit': ''},
-    ]
-    return jsonify({'kpis': kpis})
+    """Return KPI metrics as JSON, with optional ?date_from=&date_to= filter."""
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    return jsonify({'kpis': data_source.get_dashboard_kpis(date_from, date_to)})
 
 
 @app.route('/api/anomalies')
