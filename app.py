@@ -1,6 +1,6 @@
 import os
 from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, request, redirect, session, send_from_directory, abort
 from flask_cors import CORS
 
 import data_source
@@ -8,9 +8,13 @@ import data_source
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
 
+# Directory of the built React SPA (Vite output). Served by the catch-all below
+# as the single-origin approximation of "S3 bundle + API behind one ALB".
+_DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'dist')
+
 
 def _live_context():
-    """Live-mode flags for the auto-refreshing pages (demo mode -> no refresh)."""
+    """Live-mode flags (demo mode -> no polling). Still read by /api/session."""
     live_mode = os.environ.get('LAB_DATA_SOURCE', 'demo') == 'live'
     try:
         refresh_seconds = int(os.environ.get('LIVE_REFRESH_SECONDS', '5') or 5)
@@ -23,34 +27,31 @@ def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user' not in session:
-            return redirect(url_for('login'))
+            # No HTML login route any more — the SPA renders /login client-side.
+            return redirect('/login')
         return f(*args, **kwargs)
     return decorated_function
 
 
-@app.route('/')
-def index():
-    if 'user' in session:
-        return redirect(url_for('dashboard'))
-    return redirect(url_for('login'))
-
-
-@app.route('/login', methods=['GET', 'POST'])
+@app.route('/login', methods=['POST'])
 def login():
-    if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '').strip()
-        if username and password:
-            session['user'] = username
-            return redirect(url_for('dashboard'))
-        return render_template('login.html', error='Invalid credentials')
-    return render_template('login.html')
+    """Session-setting login handler (template-free).
 
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
+    The HTML login UI now lives in the SPA (GET /login falls through to the
+    catch-all). This POST handler is kept because the BDD API layer
+    (utils/api_client.ApiClient.login) authenticates by form-POSTing here and
+    reusing the session cookie; it detects failure by checking whether the
+    response URL still contains '/login'. On any non-empty credential pair it
+    sets the session and redirects to /dashboard; otherwise it redirects back
+    to /login. No template is rendered. (The SPA's own login uses POST
+    /api/login, a separate blueprint endpoint.)
+    """
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '').strip()
+    if username and password:
+        session['user'] = username
+        return redirect('/dashboard')
+    return redirect('/login')
 
 
 @app.route('/__reset', methods=['POST'])
@@ -65,111 +66,6 @@ def __reset():
         return {'reset': False, 'reason': 'live mode'}, 200
     data_source.reset_demo_state()
     return {'reset': True}, 200
-
-
-@app.route('/dashboard')
-@login_required
-def dashboard():
-    import json as _json
-    date_from = request.args.get('date_from', '')
-    date_to = request.args.get('date_to', '')
-    kpis = data_source.get_dashboard_kpis(date_from, date_to)
-    charts = data_source.get_anomaly_charts(date_from, date_to)
-    empty_state = False
-    if date_to:
-        try:
-            year = int(date_to.split('-')[0])
-            if year > 2030:
-                empty_state = True
-        except (ValueError, IndexError):
-            pass
-    live_mode, refresh_seconds = _live_context()
-    return render_template(
-        'dashboard.html',
-        kpis=kpis,
-        charts_json=_json.dumps(charts),
-        date_from=date_from,
-        date_to=date_to,
-        empty_state=empty_state,
-        live_mode=live_mode,
-        refresh_seconds=refresh_seconds,
-    )
-
-
-@app.route('/anomalies')
-@login_required
-def anomalies_list():
-    severity = request.args.get('severity', '')
-    all_anomalies = data_source.get_anomalies()
-    filtered = all_anomalies
-    if severity and severity.upper() in ('HIGH', 'MEDIUM', 'LOW'):
-        filtered = [a for a in all_anomalies if a['severity'] == severity.upper()]
-    live_mode, refresh_seconds = _live_context()
-    return render_template('anomalies.html', anomalies=filtered, severity=severity, live_mode=live_mode, refresh_seconds=refresh_seconds)
-
-
-@app.route('/anomalies/<int:id>/acknowledge', methods=['POST'])
-@login_required
-def acknowledge_anomaly(id):
-    data_source.set_anomaly_status(id, 'acknowledged')
-    return redirect(url_for('anomalies_list'))
-
-
-@app.route('/anomalies/<int:id>')
-@login_required
-def anomaly_detail(id):
-    anomaly = next((a for a in data_source.get_anomalies() if a['id'] == id), None)
-    if anomaly is None:
-        return redirect(url_for('anomalies_list'))
-    return render_template('anomaly_detail.html', anomaly=anomaly)
-
-
-@app.route('/rca')
-@login_required
-def rca_list():
-    status = request.args.get('status', '')
-    all_records = data_source.get_rca_records()
-    filtered = all_records
-    if status and status in ('open', 'in_progress', 'resolved'):
-        filtered = [r for r in all_records if r['status'] == status]
-    live_mode, refresh_seconds = _live_context()
-    return render_template('rca.html', rca_list=filtered, status=status, live_mode=live_mode, refresh_seconds=refresh_seconds)
-
-
-@app.route('/rca/<int:id>/update', methods=['POST'])
-@login_required
-def update_rca(id):
-    new_status = request.form.get('status', '')
-    if new_status in ('open', 'in_progress', 'resolved'):
-        data_source.set_rca_status(id, new_status)
-    return redirect(url_for('rca_detail', id=id) + '?success=1')
-
-
-@app.route('/rca/<int:id>')
-@login_required
-def rca_detail(id):
-    rca = next((r for r in data_source.get_rca_records() if r['id'] == id), None)
-    if rca is None:
-        return redirect(url_for('rca_list'))
-    success = request.args.get('success')
-    live_mode, _ = _live_context()
-    rca_graph = data_source.get_rca_subgraph(id) if live_mode else None
-    return render_template('rca_detail.html', rca=rca, success=success, live_mode=live_mode, rca_graph=rca_graph)
-
-
-@app.route('/ingestion')
-@login_required
-def ingestion():
-    pm_files = data_source.get_pm_ingestion()
-    tickets = data_source.get_ticket_feed()
-    live_mode, refresh_seconds = _live_context()
-    return render_template(
-        'ingestion.html',
-        pm_files=pm_files,
-        tickets=tickets,
-        live_mode=live_mode,
-        refresh_seconds=refresh_seconds,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -187,3 +83,39 @@ CORS(
     resources={r"/api/*": {"origins": [os.environ.get('SPA_ORIGIN', 'http://localhost:3000')]}},
     supports_credentials=True,
 )
+
+
+# ---------------------------------------------------------------------------
+# SPA static serving + client-side routing fallback (design §8).
+#
+# This catch-all is registered LAST so the specific routes above (/api/* via
+# the blueprint, /__reset, POST /login, and Flask's own /static/*) always win.
+# It never handles /api/* (the blueprint owns those and 404s there rather than
+# serving index.html, so a missing API path stays a JSON 404, not HTML).
+# For any other path: serve the matching file under frontend/dist if it exists
+# (e.g. /assets/index-*.js, /vite.svg), otherwise return index.html so the
+# React BrowserRouter resolves the route (/dashboard, /rca/1, /login, ...).
+# ---------------------------------------------------------------------------
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def spa(path):
+    # Never let the catch-all shadow the API; the blueprint returns its own 404.
+    if path == 'api' or path.startswith('api/'):
+        abort(404)
+
+    index_path = os.path.join(_DIST_DIR, 'index.html')
+    if not os.path.exists(index_path):
+        return (
+            'SPA not built — run "npm run build" in frontend/ to generate '
+            'frontend/dist.',
+            503,
+        )
+
+    # Serve a real build artifact (assets, favicon, etc.) when the path maps to
+    # an existing file under dist; otherwise fall through to the SPA shell.
+    if path:
+        candidate = os.path.join(_DIST_DIR, path)
+        if os.path.isfile(candidate):
+            return send_from_directory(_DIST_DIR, path)
+
+    return send_from_directory(_DIST_DIR, 'index.html')

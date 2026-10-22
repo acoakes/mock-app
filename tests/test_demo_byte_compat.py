@@ -1,9 +1,15 @@
 """Demo-mode byte-compatibility gate (NFR-1 / AC-8 / MEDIUM-4).
 
-With LAB_DATA_SOURCE unset (demo mode) the raw response bytes of GET /rca,
-GET /rca/1 and GET /api/rca must equal the committed baseline captured from the
-pre-change app in tests/fixtures/demo_baseline/. Any diff is a HARD failure: the
-live-mode RCA subgraph visual must be invisible in demo mode down to the byte.
+With LAB_DATA_SOURCE unset (demo mode) the raw response bytes of GET /api/rca
+must equal the committed baseline in tests/fixtures/demo_baseline/. Any diff is
+a HARD failure.
+
+The two HTML baseline cases (/rca, /rca/1) were removed at the SPA cut-over
+(slice 1 step 7): those Jinja routes no longer exist, so there is no server HTML
+to keep byte-stable. The /api/rca JSON case persists as an API-shape regression
+test. Its fixture is pinned to LF via tests/fixtures/demo_baseline/.gitattributes
+so the committed baseline matches the LF bytes Flask emits (avoids the Windows
+autocrlf CRLF-vs-LF drift).
 """
 
 import os
@@ -16,8 +22,6 @@ import app as appmod
 _BASELINE_DIR = pathlib.Path(__file__).parent / 'fixtures' / 'demo_baseline'
 
 _CASES = [
-    ('/rca', 'rca.html'),
-    ('/rca/1', 'rca_1.html'),
     ('/api/rca', 'api_rca.json'),
 ]
 
