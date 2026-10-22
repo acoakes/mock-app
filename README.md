@@ -146,6 +146,17 @@ from a separate origin and talk to Flask cross-origin.
 | `npm run preview` | Serve the production build locally |
 | `npm run test` | Run the Vitest unit suite |
 
+### Deployment (work env: S3 + ALB)
+
+In the work "ARC" environment the built `frontend/dist/` bundle is uploaded to S3
+and served as static assets behind an ALB, with the REST API path-routed behind the
+same ALB (`/api/*`) so the SPA and API share one origin (and the session cookie).
+Locally and in CI this single-origin topology is approximated by the Flask app
+serving the same `frontend/dist/` bundle via its catch-all route (see `app.py`), so
+one `BASE_URL` (`http://localhost:5000`) covers the whole suite. CI builds the bundle
+(`npm ci` + `npm run build`) before starting Flask; a real S3/ALB is not reproduced
+locally.
+
 ## Environment Variables
 
 | Variable | Default | Description |
