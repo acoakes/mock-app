@@ -86,6 +86,18 @@ CORS(
 
 
 # ---------------------------------------------------------------------------
+# WebSocket live-push channel (design §3/§9 [LATER] slice). Registered here,
+# after the API blueprint, reusing the same session-cookie auth as /api/*. The
+# /ws rule is specific, so it is matched ahead of the SPA catch-all below and
+# never shadows /api/*, /__reset, /static, or POST /login. In demo mode it
+# pushes simulated events; the SPA turns each into api.util.invalidateTags(...).
+# ---------------------------------------------------------------------------
+from ws import init_websocket
+
+init_websocket(app, login_required)
+
+
+# ---------------------------------------------------------------------------
 # SPA static serving + client-side routing fallback (design §8).
 #
 # This catch-all is registered LAST so the specific routes above (/api/* via

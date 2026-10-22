@@ -20,6 +20,13 @@ export default defineConfig({
         target: 'http://localhost:5000',
         changeOrigin: true,
       },
+      // WebSocket live-push channel (design §3). `ws: true` upgrades the proxy
+      // so the SPA's single-origin `new WebSocket('/ws')` reaches Flask in dev.
+      '/ws': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
   build: {
