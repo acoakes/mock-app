@@ -15,10 +15,17 @@ DEMO mode (``LAB_DATA_SOURCE`` != ``live``): emit SIMULATED events on a modest
 timer so a live browser visibly updates without any lab running. This proves the
 whole socket -> Redux -> UI path end-to-end.
 
-LIVE mode: the connection is accepted but emits nothing here. Wiring a real
-LocalStack/Postgres/Gremlin event source is the documented follow-on (see the
-module tail) — the envelope shape and the frontend seam stay identical; only the
-server-side producer changes.
+LIVE mode: a lightweight per-connection poll loop reads the live domains via
+the existing ``data_source`` accessors every ``WS_LIVE_POLL_SECONDS``, diffs
+them against the last-pushed snapshot (pure logic in ``ws_live.py``), and pushes
+one ``{type,event,id}`` envelope per genuinely-new anomaly / RCA record /
+ingestion item. The envelope shape and the frontend seam are IDENTICAL to the
+demo emitter; only the server-side producer differs. The emitter is
+fail-safe: ``data_source`` accessors fall back to demo data on error, so the
+loop gates on ``ws_live.looks_like_demo`` to avoid emitting a storm of fake
+"new" events when live reads transiently fail (see ``ws_live`` for the full
+reasoning). Set ``WS_LIVE_PUSH_ENABLED=0`` to keep the old accept-and-block
+no-op behaviour.
 
 Route hygiene: ``/ws`` is a specific rule, so Flask matches it ahead of the SPA
 ``<path:path>`` catch-all in ``app.py``. It does not touch ``/api/*``,
@@ -26,12 +33,18 @@ Route hygiene: ``/ws`` is a specific rule, so Flask matches it ahead of the SPA
 """
 
 import json
+import logging
 import os
 import time
 
 from flask import session
 from flask_sock import Sock
 from simple_websocket import ConnectionClosed
+
+import data_source
+import ws_live
+
+log = logging.getLogger(__name__)
 
 # Demo emit cadence (seconds). Modest so a live browser visibly updates. Kept as
 # a module constant and also readable from WS_SIM_INTERVAL so tests can shrink it
@@ -49,12 +62,45 @@ _SIM_SEQUENCE = (
 )
 
 
+# LIVE emitter defaults. The poll cadence is modest versus the feed's
+# ~12s/~20s/~30s producers, so a few-second poll is plenty; all are env-tunable
+# (consistent with how WS_SIM_INTERVAL / LAB_DATA_SOURCE are already handled).
+_DEFAULT_LIVE_POLL_SECONDS = 5.0
+_DEFAULT_LIVE_MAX_EMIT_PER_POLL = 50
+
+
 def _sim_interval():
     """Demo emit interval in seconds (WS_SIM_INTERVAL overrides the default)."""
     try:
         return float(os.environ.get("WS_SIM_INTERVAL", _DEFAULT_SIM_INTERVAL))
     except (TypeError, ValueError):
         return _DEFAULT_SIM_INTERVAL
+
+
+def _live_poll_seconds():
+    """LIVE poll cadence in seconds (WS_LIVE_POLL_SECONDS overrides the default)."""
+    try:
+        return float(os.environ.get("WS_LIVE_POLL_SECONDS", _DEFAULT_LIVE_POLL_SECONDS))
+    except (TypeError, ValueError):
+        return _DEFAULT_LIVE_POLL_SECONDS
+
+
+def _live_push_enabled():
+    """Master enable for the LIVE emitter (WS_LIVE_PUSH_ENABLED).
+
+    Truthy by default. When falsy (``0``/``false``/``no``/empty) the LIVE branch
+    keeps today's accept-and-block no-op behaviour — a safe off-switch.
+    """
+    raw = os.environ.get("WS_LIVE_PUSH_ENABLED", "1").strip().lower()
+    return raw not in ("0", "false", "no", "")
+
+
+def _live_max_emit():
+    """Per-poll emit cap for the LIVE emitter (WS_LIVE_MAX_EMIT_PER_POLL)."""
+    try:
+        return int(os.environ.get("WS_LIVE_MAX_EMIT_PER_POLL", _DEFAULT_LIVE_MAX_EMIT_PER_POLL))
+    except (TypeError, ValueError):
+        return _DEFAULT_LIVE_MAX_EMIT_PER_POLL
 
 
 def _is_live_mode():
@@ -81,14 +127,46 @@ def init_websocket(app, login_required=None):
             ws.close()
             return
 
-        # LIVE mode: accept but emit nothing (real-lab source is the follow-on).
-        # Block on receive so the connection stays open without a busy loop and
-        # closes cleanly when the client goes away.
+        # LIVE mode: push REAL lab events via a lightweight server-side poll.
         if _is_live_mode():
+            # Off-switch: keep today's accept-and-block no-op when disabled.
+            if not _live_push_enabled():
+                try:
+                    while True:
+                        if ws.receive() is None:
+                            break
+                except ConnectionClosed:
+                    pass
+                return
+
+            poll_seconds = _live_poll_seconds()
+            max_emit = _live_max_emit()
+            # None snapshot => the first poll seeds the baseline silently (so we
+            # announce only CHANGES seen while connected, never the backlog).
+            snapshot = None
             try:
                 while True:
-                    if ws.receive() is None:
-                        break
+                    reads = {
+                        "anomalies": data_source.get_anomalies(),
+                        "rca": data_source.get_rca_records(),
+                        "pm_files": data_source.get_pm_ingestion(),
+                        "tickets": data_source.get_ticket_feed(),
+                    }
+                    # Demo-fallback gate: the data_source accessors fail-safe to
+                    # demo data on any live-read error. If the read is the known
+                    # demo set, treat it as a transient failure — SKIP the diff,
+                    # leave the snapshot untouched, and emit NOTHING, so a blip
+                    # neither storms fake events nor corrupts the live baseline.
+                    # On recovery the loop diffs live-against-live (no storm).
+                    if ws_live.looks_like_demo(reads):
+                        time.sleep(poll_seconds)
+                        continue
+                    envelopes, snapshot = ws_live.diff_snapshot(snapshot, reads, max_emit)
+                    for envelope in envelopes:
+                        # send raises ConnectionClosed on a dead socket, ending
+                        # the loop cleanly (same pattern as the demo emitter).
+                        ws.send(json.dumps(envelope))
+                    time.sleep(poll_seconds)
             except ConnectionClosed:
                 pass
             return
